@@ -50,7 +50,8 @@ uint8_t cardType;
 uint64_t cardSize;
 String message, date_and_time, sensor_reading, payload;
 String passwordS1 = "password1", passwordS2 = "password2", passwordS3 = "password3", passwordSMS;
-float sensor_reading_float[8];
+int param_n;    // No. of parameters sent
+float sensor_reading_float[11];
 uint32_t s1_date_and_time = 0, s2_date_and_time = 0, s3_date_and_time = 0, new_date_and_time; 
 
 
@@ -60,6 +61,7 @@ void setup() {
   Serial2.begin(SERIAL_DEBUG_BAUD);   // Hardware Serial2 (RX2, TX2)
   ConnectToWiFi();
   mqttClient.setServer(THINGSBOARD_SERVER, THINGSBOARD_PORT);
+  mqttClient.setBufferSize(1024);     // Set mqtt client buffer size to larger value to accomodate longer messages
   delay(3000);
 
 
@@ -94,7 +96,7 @@ void setup() {
   if (!file) {
     Serial.println("File doesn't exist");
     Serial.println("Creating file...");
-    writeFile(SD, "/sensor1_data.txt", "date&time, Temp, EC, pH, TDS, Turb, DO, Chl-a, P \r\n");
+    writeFile(SD, "/sensor1_data.txt", "date&time, Temp, EC, pH, TDS, Turb, DO, P, Chl-a F1 , Chl-a F2 ,Chl-a F3 ,Chl-a F4 , Chl-a F5 , Chl-a F6 , Chl-a F7 , Chl-a F8 , Chl-a Clear , Chl-a NIR \r\n");
   } else {
     Serial.println("File already exists");
   }
@@ -104,7 +106,7 @@ void setup() {
   if (!file) {
     Serial.println("File doesn't exist");
     Serial.println("Creating file...");
-    writeFile(SD, "/sensor2_data.txt", "date&time, Temp, EC, pH, TDS, Turb, DO, Chl-a, P \r\n");
+    writeFile(SD, "/sensor2_data.txt", "date&time, Temp, EC, pH, TDS, Turb, DO, P, Chl-a F1 , Chl-a F2 ,Chl-a F3 ,Chl-a F4 , Chl-a F5 , Chl-a F6 , Chl-a F7 , Chl-a F8 , Chl-a Clear , Chl-a NIR \r\n");
   } else {
     Serial.println("File already exists");
   }
@@ -115,7 +117,7 @@ void setup() {
   if (!file) {
     Serial.println("File doesn't exist");
     Serial.println("Creating file...");
-    writeFile(SD, "/sensor3_data.txt", "date&time, Temp, EC, pH, TDS, Turb, DO, Chl-a, P \r\n");
+    writeFile(SD, "/sensor3_data.txt", "date&time, Temp, EC, pH, TDS, Turb, DO, P, Chl-a F1 , Chl-a F2 ,Chl-a F3 ,Chl-a F4 , Chl-a F5 , Chl-a F6 , Chl-a F7 , Chl-a F8 , Chl-a Clear , Chl-a NIR \r\n");
   } else {
     Serial.println("File already exists");
   }
@@ -158,7 +160,13 @@ void loop() {
     Expected SMS payload:
     “<password>\n”
     “<unix_time>\n”
-    “<Temp>,<EC>,<pH>,<TDS>,<Turb>,<DO>,<Chl-a>,<P>\n”
+    “6,<Temp>,<EC>,<pH>,<TDS>,<Turb>,<DO>\n”
+
+    or
+
+    “<password>\n”
+    “<unix_time>\n”
+    “11,<P>,<Chl-a F1>,<Chl-a F2>,<Chl-a F3>,<Chl-a F4>,<Chl-a F5>,<Chl-a F6>,<Chl-a F7>,<Chl-a F8>,<Chl-a Clear>,<Chl-a NIR>\n”
     */
 
     // Check password
@@ -168,10 +176,19 @@ void loop() {
       passwordSMS = message.substring(0, index_message);
       message = message.substring(index_message + 1);
 
-      //Extract Date and Time, and Sensor Reading
+      // Extract Date and Time
       index_message = message.indexOf("\n");
       date_and_time = message.substring(0, index_message);
-      sensor_reading = message.substring(index_message + 1);
+      message = message.substring(index_message + 1);
+
+      // Extract Number of Parameters (expected value is 6 or 11)
+      index_message = message.indexOf(",");
+      param_n = message.substring(0, index_message).toInt();\
+      message = message.substring(index_message + 1);
+
+      // Extract Sensor Readings
+      index_message = message.indexOf("\n");
+      sensor_reading = message.substring(0,index_message);
       
       //Parse Date
       new_date_and_time = date_and_time.toInt();
@@ -338,9 +355,13 @@ void storeMessage(const char *path) {
   String log_entry;
 
   Serial.println("Saving data...");
-  Serial.print("Log entry: " + date_and_time + "," + sensor_reading);
+  if (param_n == 6) {
+    log_entry = date_and_time + "," + sensor_reading + ", , , , , , , , , , , \n";
+  } else if (param_n == 11) {
+    log_entry = date_and_time + ", , , , , , ," + sensor_reading + "\n";
+  }
+  Serial.print("Log entry: " + log_entry);
 
-  log_entry = date_and_time + "," + sensor_reading + "\n";
   appendFile(SD, path, log_entry.c_str());  // Append the data to file
 }
 
@@ -348,7 +369,7 @@ void unpackMessage() {
   String sr_str = sensor_reading;  // sr_str = sensor reading buffer
   String temp_sr_str;
 
-  for (int i = 0; i <= 7; i++) {
+  for (int i = 0; i < param_n; i++) {
     int index_message = sr_str.indexOf(",");
     temp_sr_str = sr_str.substring(0, index_message);
     sensor_reading_float[i] = temp_sr_str.toFloat();
@@ -358,10 +379,11 @@ void unpackMessage() {
 }
 
 void createPayload(String node_number) {
-  String parameters[8] = {"Temp", "EC", "pH", "TDS", "Turb", "DO", "Chl-a", "P"}; 
+  String parameters[17] = {"Temp", "EC", "pH", "TDS", "Turb", "DO", "P", "Chl-a F1", "Chl-a F2", "Chl-a F3", "Chl-a F4", "Chl-a F5", "Chl-a F6", "Chl-a F7", "Chl-a F8", "Chl-a Clear", "Chl-a NIR"}; 
 
   /*
   Desired payload format:
+  if param_n = 6:
   {
     "ts":date_and_time,   //date_and_time should be in millisecond accuracy (append "000" at the end)
     "values":{
@@ -370,9 +392,25 @@ void createPayload(String node_number) {
       "S1 pH": sensor_reading[2],
       "S1 TDS": sensor_reading[3],
       "S1 Turb": sensor_reading[4],
-      "S1 DO": sensor_reading[5],
-      "S1 Chl-a": sensor_reading[6],
-      "S1 P": sensor_reading[7]
+      "S1 DO": sensor_reading[5]
+    }
+  }
+
+  if param_n = 11:
+  {
+    "ts":date_and_time,   //date_and_time should be in millisecond accuracy (append "000" at the end)
+    "values":{
+      "S1 P": sensor_reading[0],
+      "S1 Chl-a F1": sensor_reading[1],
+      "S1 Chl-a F2": sensor_reading[2],
+      "S1 Chl-a F3": sensor_reading[3],
+      "S1 Chl-a F4": sensor_reading[4],
+      "S1 Chl-a F5": sensor_reading[5],
+      "S1 Chl-a F6": sensor_reading[6],
+      "S1 Chl-a F7": sensor_reading[7],
+      "S1 Chl-a F8": sensor_reading[8],
+      "S1 Chl-a Clear": sensor_reading[9],
+      "S1 Chl-a NIR": sensor_reading[10]
     }
   }
   */
@@ -381,9 +419,14 @@ void createPayload(String node_number) {
   payload += "\"ts\":" + date_and_time + "000";
   payload += ",\"values\":{";
 
-  for (int i = 0; i <= 7; i++) {
-    payload += "\"S" + node_number + " " + parameters[i] + "\":" + String(sensor_reading_float[i]);
-    if (i < 7) {
+  for (int i = 0; i < param_n; i++) {
+    if (param_n == 6) {
+      payload += "\"S" + node_number + " " + parameters[i] + "\":" + String(sensor_reading_float[i]);
+    } else if (param_n == 11) {
+      payload += "\"S" + node_number + " " + parameters[i+6] + "\":" + String(sensor_reading_float[i]);
+    }
+    
+    if (i < (param_n - 1)) {
       payload += ",";
     }
   }
@@ -397,7 +440,9 @@ void createPayload(String node_number) {
 void publishData() {
   char attributes[1024];
   payload.toCharArray(attributes, 1024);
-  mqttClient.publish("v1/devices/me/telemetry", attributes);
-
-  Serial.println("published successfully");
+  if (mqttClient.publish("v1/devices/me/telemetry", attributes)){
+    Serial.println("published successfully");
+  } else {
+    Serial.println("publish unsuccessful");
+  }
 }
